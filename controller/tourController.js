@@ -1,95 +1,142 @@
-const fs = require('fs');
 const Tour = require('./../models/tourModel');
 
-const tours = JSON.parse(
-  fs.readFileSync(`${__dirname}/../dev-data/data/tours-simple.json`)
-);
-
-exports.checkID = (req, res, next, value) => {
-  console.log(`Tour id is: ${value}`);
-  if (req.params.id * 1 > tours.length) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'Invalid ID',
-    });
-  }
-  next(); //Để thoát ra khỏi middleware để thực hiện các tác vụ khác
-};
-
-exports.checkBody = (req, res, next) => {
-  if (!req.body.name || !req.body.price) {
-    return res.status(400).json({
-      status: 'fail',
-      message: 'Missing name or price',
-    });
-  }
-  next();
-};
-
 //Route handle
-exports.getAllTours = (req, res) => {
-  console.log(req.requestTime);
-  res.status(200).json({
-    status: 'success',
-    requestAt: req.requestTime,
-    results: tours.length,
-    data: {
-      tours: tours,
-    },
-  });
-};
+exports.getAllTours = async (req, res) => {
+  try {
+    console.log(req.query);
 
-exports.getTour = (req, res) => {
-  console.log(req.params);
+    //BUILD QUERY
+    // 1A. Filtering
+    const queryObj = { ...req.query };
+    const excludedFiels = ['page', 'sort', 'limit', 'fields'];
+    excludedFiels.forEach((el) => delete queryObj[el]);
 
-  //Khi dữ liệu đang là số kiểu string khi nhân với 1 số sẽ tự động chuyển thành kiểu number
-  const id = req.params.id * 1;
-  const tour = tours.find((tour) => tour.id === id);
+    // 1B. Advanced Filtering
+    let queryStr = JSON.stringify(queryObj);
+    queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, (match) => `$${match}`);
+    console.log(JSON.parse(queryStr));
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      tour: tour,
-    },
-  });
-};
+    let query = Tour.find(JSON.parse(queryStr));
 
-exports.createTour = (req, res) => {
-  //   console.log(req.body);
-
-  const newId = tours[tours.length - 1].id + 1;
-  //Object.assign cho phép tạo một obj mới bằng cách hợp nhất hai đối tượng hện có
-  const newTour = Object.assign({ id: newId }, req.body);
-  const newListTour = [...tours, newTour];
-
-  fs.writeFile(
-    `${__dirname}/dev-data/data/tours-simple.json`,
-    JSON.stringify(newListTour),
-    (error) => {
-      //201: created = được tạo ra
-      res.status(201).json({
-        status: 'success',
-        data: {
-          tour: newTour,
-        },
-      });
+    // 2. Sorting
+    if (req.query.sort) {
+      const sortBy = req.query.sort.split(',').join(' ');
+      console.log(sortBy);
+      query = query.sort(sortBy);
+    } else {
+      query = query.sort('-createdAt');
     }
-  );
+
+    // 3. Field Limiting
+    if (req.query.fields) {
+      const fields = req.query.fields.split(',').join(' ');
+      query = query.select(fields);
+    } else {
+      query = query.select('-__v'); //loại trừ field này
+    }
+
+    //EXECUTE QUERY
+    const tours = await query;
+
+    // const tours = await Tour.find({
+    //   duration: 5,
+    //   difficulty: 'easy',
+    // });
+
+    // const tours = await Tour.find()
+    //   .where('duration')
+    //   .equals(5)
+    //   .where('difficulty')
+    //   .equals('easy');
+
+    res.status(200).json({
+      status: 'success',
+      results: tours.length,
+      data: {
+        tours: tours,
+      },
+    });
+  } catch (error) {
+    res.status(404).json({
+      status: 'fail',
+      message: error,
+    });
+  }
 };
 
-exports.updateTour = (req, res) => {
-  res.status(202).json({
-    status: 'success',
-    data: {
-      tour: '<Updates tour here...>',
-    },
-  });
+exports.getTour = async (req, res) => {
+  try {
+    const tour = await Tour.findById(req.params.id);
+    //Tour.findOne({ _id: req.params.id})
+    res.status(200).json({
+      status: 'success',
+      data: {
+        tour: tour,
+      },
+    });
+  } catch (error) {
+    res.status(404).json({
+      status: 'fail',
+      message: error,
+    });
+  }
 };
 
-exports.deleteTour = (req, res) => {
-  // 204: không có nội dung (no content)
-  res.status(204).json({
-    status: 'success',
-    data: null,
-  });
+exports.createTour = async (req, res) => {
+  try {
+    // const newTour = new Tour({});
+    // newTour.save()
+
+    //Option 2
+    const newTour = await Tour.create(req.body);
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        tour: newTour,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      status: 'fail',
+      message: error,
+    });
+  }
+};
+
+exports.updateTour = async (req, res) => {
+  try {
+    const tour = await Tour.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true, //validation các giá trị
+    });
+    res.status(202).json({
+      status: 'success',
+      data: {
+        tour,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      status: 'fail',
+      message: 'Invalid data sent!',
+      error,
+    });
+  }
+};
+
+exports.deleteTour = async (req, res) => {
+  try {
+    await Tour.findByIdAndDelete(req.params.id);
+    // 204: không có nội dung (no content)
+    res.status(204).json({
+      status: 'success',
+      data: null,
+    });
+  } catch (error) {
+    res.status(400).json({
+      status: 'fail',
+      message: error,
+    });
+  }
 };
